@@ -320,10 +320,8 @@ if __name__ == "__main__":
     for i, cl in enumerate(colours):
         axs[0].plot([], [], color=cl, label=str(i))
 
-    _ = axs[0].set_xticks([])
-    _ = axs[0].set_yticks([])
-
     axs[0].legend()
+    axs[0].set_title("Isomap initialization")
 
     im = axs[1].scatter(result[:,0], result[:,1], lw=0, c=c,
         s=100)
@@ -331,21 +329,8 @@ if __name__ == "__main__":
     for i, cl in enumerate(colours):
         axs[1].plot([], [], color=cl, label=str(i))
 
-    _ = axs[1].set_xticks([])
-    _ = axs[1].set_yticks([])
-
     axs[1].legend()
-
-
-    plt.show()
-
-    fig, axs = plt.subplots(1,1,figsize=(10,10))
-
-    axs.scatter(x_init[:,0], x_init[:,1], lw=0, color='r',
-        s=100, alpha=0.4)
-
-    axs.scatter(result[:,0], result[:,1], lw=0, color='g',
-        s=100, alpha=0.4)
+    axs[1].set_title("TSNE embedding")
 
 
     plt.show()
