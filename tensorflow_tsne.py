@@ -21,8 +21,6 @@ from keras.datasets import mnist
 from tqdm import tqdm
 
 
-
-
 def LoadData():
     print("Loading MNIST data...")
     _, (X_test, y_test) = mnist.load_data()
@@ -31,7 +29,9 @@ def LoadData():
     _, xt, _, yt  = train_test_split(X_test, y_test, 
         test_size=0.3, random_state=0)
 
-    return xt, yt
+    n_class = np.unique(yt).shape[0]
+
+    return xt, yt, n_class
 
 #######################
 #Data functions
@@ -167,7 +167,7 @@ def GenerateNeighbourProbabilities(X, perplexity=30,
     #Symmetrize and renormalize the probabilities
     P = P + P.T
     P /= P.sum()
-    P = np.maximum(P, sys.float_info.epsilon)
+    P = np.maximum(P, 10e-8)
 
     return P
 
@@ -183,13 +183,15 @@ def PairwiseEmbeddedDistances(X):
 
     X : Tensor storing the TSNE projected samples
 
+    ||xi - xj|| ** 2 = xi ** 2 + xj ** 2 - 2 * xi * xj
+
     Returns:
     ---------
 
     D : Tensor storing neighbour distances
     """
-    sum_x = tf.reduce_sum(tf.square(X), reduction_indices=1, keep_dims=False)
-    D = sum_x + tf.reshape(sum_x, [-1, 1]) - 2 * tf.matmul(X, tf.transpose(X))
+    sum_x_2 = tf.reduce_sum(tf.square(X), reduction_indices=1, keep_dims=False)
+    D = sum_x_2 + tf.reshape(sum_x_2, [-1, 1]) - 2 * tf.matmul(X, tf.transpose(X))
 
     return D
 
@@ -209,28 +211,35 @@ def EmbeddedDistance2Probabilities(D, embed_dim=2):
 
     Q : Tensor storing neighbour probabilities
     """
+    #alpha = embed_dim - 1
+
+    # #T-student distribution
+    # Q = tf.pow(1 + D, -1)
+
+    # #Remove diagonals
+    # mask = tf.Variable((1 - np.eye(Q.get_shape()[0].value)).astype(np.float32))
+
+    # #Normalize and clip
+    # sum_q = tf.reduce_sum(Q * mask)
+    # Q /= sum_q
+
+    # eps = tf.Variable(np.float32(10e-8), name='eps')
+    # Q = tf.maximum(Q, eps)
     alpha = embed_dim - 1
+    eps = tf.constant(np.float32(10e-8), name='eps')
 
-    #T-student distribution
     Q = tf.pow(1 + D / alpha, -(alpha + 1) / 2)
-
-    #Remove diagonals
-    mask = tf.Variable((1 - np.eye(Q.get_shape()[0].value)).astype(np.float32))
+    mask = tf.constant((1 - np.eye(Q.get_shape()[0].value)).astype(np.float32), name='mask')
     Q *= mask
-
-    #Normalize and clip
     Q /= tf.reduce_sum(Q)
-
-    eps = tf.Variable(np.float32(sys.float_info.epsilon), name='eps')
     Q = tf.maximum(Q, eps)
-
     return Q
 
 def KLDivergence(P1, P2):
-    eps = tf.Variable(sys.float_info.epsilon, name='eps')
-    KLD = tf.log((P1 + eps) / (P2 + eps))
+    KLD = tf.log((P1) / (P2))
     KLD = tf.reduce_sum(P1 * KLD)
     return KLD
+
 
 def TSNELossFunction(X_tsne, PX, embed_dim=2):
     """
@@ -251,11 +260,11 @@ def TSNELossFunction(X_tsne, PX, embed_dim=2):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple TSNE in Tensorflow")
-    parser.add_argument('--n-iter', dest='n_iter', help='Number of optimization steps to perform')
+    parser.add_argument('--n-iter', type=int, dest='n_iter', help='Number of optimization steps to perform')
     parser.set_defaults(n_iter=100)
     args = parser.parse_args()
 
-    xt, yt = LoadData()
+    xt, yt, n_class = LoadData()
 
     #Variable holding the projected TSNE values
     if os.path.isfile('x_init.npy'):
@@ -264,7 +273,12 @@ if __name__ == "__main__":
         x_init = InitializeEmbedding(xt, embed_dim=2)
         with open("x_init.npy", 'w') as f:
             np.save(f, x_init)
+    
+    #Variables and initializations
     X_tsne = tf.Variable(x_init.astype(np.float32), name='X_tsne')
+
+    #Placeholder for handling the data   
+    PX = tf.placeholder(tf.float32, name='PX')
 
     if os.path.isfile('PX.npy'):
         PX_vals = np.load('PX.npy')
@@ -273,15 +287,65 @@ if __name__ == "__main__":
         with open("PX.npy", 'w') as f:
             np.save(f, PX_vals)
 
-    #Placeholder for handling the data   
-    PX = tf.placeholder(tf.float32)
-
+    #Tensorflow computation graph
     tsne_loss = TSNELossFunction(X_tsne, PX)
+
+    #Optimize using Adam
     opt_step = tf.train.AdamOptimizer().minimize(tsne_loss)
+    #opt_step = tf.train.GradientDescentOptimizer(0.5).minimize(tsne_loss)
+
     init_step = tf.global_variables_initializer()
 
+    print([v.name for v in tf.global_variables()])
+
+    #Running TSNE optimization
     with tf.Session() as sess:
         sess.run(init_step)
 
         for _ in tqdm(xrange(args.n_iter), desc='Optimizing projection'):
-            result = sess.run(opt_step, feed_dict={PX : PX_vals})
+            tqdm.write('KL divergence : {0}'.format(sess.run(tsne_loss, feed_dict={PX : PX_vals})))
+            sess.run(opt_step, feed_dict={PX : PX_vals})
+            result = sess.run(X_tsne)
+
+    #Generating a visualization of the training process
+
+    fig, axs = plt.subplots(1,2,figsize=(20,10))
+
+    colours = plt.cm.Spectral(np.linspace(0,1,n_class))
+    c = colours[yt]
+
+    im = axs[0].scatter(x_init[:,0], x_init[:,1], lw=0, c=c,
+        s=100)
+
+    for i, cl in enumerate(colours):
+        axs[0].plot([], [], color=cl, label=str(i))
+
+    _ = axs[0].set_xticks([])
+    _ = axs[0].set_yticks([])
+
+    axs[0].legend()
+
+    im = axs[1].scatter(result[:,0], result[:,1], lw=0, c=c,
+        s=100)
+
+    for i, cl in enumerate(colours):
+        axs[1].plot([], [], color=cl, label=str(i))
+
+    _ = axs[1].set_xticks([])
+    _ = axs[1].set_yticks([])
+
+    axs[1].legend()
+
+
+    plt.show()
+
+    fig, axs = plt.subplots(1,1,figsize=(10,10))
+
+    axs.scatter(x_init[:,0], x_init[:,1], lw=0, color='r',
+        s=100, alpha=0.4)
+
+    axs.scatter(result[:,0], result[:,1], lw=0, color='g',
+        s=100, alpha=0.4)
+
+
+    plt.show()
