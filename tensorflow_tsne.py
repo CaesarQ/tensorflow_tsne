@@ -7,9 +7,12 @@ import seaborn as sns
 sns.set(color_codes=True)
 
 from sklearn.manifold import Isomap
+from sklearn.metrics import pairwise_distances
 from sklearn.model_selection import train_test_split
 
 from keras.datasets import mnist
+
+from tqdm import tqdm
 
 from __future__ import division, print_function
 
@@ -23,21 +26,25 @@ def LoadData():
 
     return xt, yt
 
-def InitializeEmbedding(X):
-    iso_model = Isomap(n_components=2)
-    embed_init = iso_model.fit_transform(X)
-
-    return embed_init
-
-def PairwiseDistances():
-    pass
+#######################
+#Data functions
 
 def Precision2Entropy(D, beta):
     """
-    D : Distance to all points
+    Given distance vector and precision, calculate the probability distribution
+    and the entropy
+
+    Inputs
+    -------
+
+    D : Distance to all points (numpy array, shape (n_samples,))
     beta : Precision, the inverse of the variance
 
-    returns Entropy (H), Probability distribution (P)
+    Returns
+    --------
+
+    Entropy (H), float
+    Probability distribution (P) :(numpy array, shape (n_samples,)) 
 
     P = exp(-beta * D) / Z = Pb / Z
     Z = sum(Pb)
@@ -57,10 +64,21 @@ def Precision2Entropy(D, beta):
 
 def BinarySearchProbabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0):
     """
-    D : Distance to all points
+    Construct the neighbour-probabilities for a given sample in the high-dimensional
+    space by a search over possible precisions.
+
+    Inputs
+    -------
+
+    D : Distance to all points (numpy array, shape (n_samples,))
     log_perplexity : log(perplexity)
     tolerance : Acceptable perplexity violation
     beta_init : Initial guess for perplexity
+
+    Returns
+    --------
+
+    P : Probability vector (numpy array, shape (n_samples,))
     """
 
     #Perform a binary search for the correct precision
@@ -103,7 +121,48 @@ def BinarySearchProbabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0):
 
     return P
 
-def Distance2Probabilities():
+def GenerateNeighbourProbabilities(X, perplexity=30, 
+        metric='euclidean', tolerance=1e-5, beta_init=1.0):
+    """
+
+    """
+    n_samples, _ = X.shape
+
+    #Obtain the pairwise distances
+    D = pairwise_distances(X, metric=metric)
+
+    #The probability matrix
+    P = np.zeros( (n_samples, n_samples,) )
+    inds_ = (1 - np.eye(n_samples)).astype(bool)
+
+    log_perplexity = np.log(perplexity)
+
+    for Pi, Di in tqdm(zip(P, D), desc='Computing Neighbour Probabilities'):
+        Pi[inds_] = BinarySearchProbabilities(Di, log_perplexity, 
+            tolerance=tolerance, beta_init=beta_init)
+
+
+    return P
+
+##################################
+#Functions over symbolic variables
+def InitializeEmbedding(X):
+    """
+    Initialize the tsne projection using isomap
+    """
+
+    
+    iso_model = Isomap(n_components=2)
+    embed_init = iso_model.fit_transform(X)
+
+    return embed_init
+
+#This will be a symbolic function
+def PairwiseEmbeddedDistances():
+    pass
+
+#This will be a symbolic function
+def EmbeddedDistance2Probabilities():
     pass
 
 def KLDivergence():
