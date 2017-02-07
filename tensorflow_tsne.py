@@ -210,16 +210,20 @@ def EmbeddedDistance2Probabilities(D, embed_dim=2):
     Q : Tensor storing neighbour probabilities
     """
     alpha = embed_dim - 1
-    eps = tf.Variable(np.float32(sys.float_info.epsilon), name='eps')
 
+    #T-student distribution
     Q = tf.pow(1 + D / alpha, -(alpha + 1) / 2)
 
     #Remove diagonals
     mask = tf.Variable((1 - np.eye(Q.get_shape()[0].value)).astype(np.float32))
     Q *= mask
-    
+
+    #Normalize and clip
     Q /= tf.reduce_sum(Q)
+
+    eps = tf.Variable(np.float32(sys.float_info.epsilon), name='eps')
     Q = tf.maximum(Q, eps)
+
     return Q
 
 def KLDivergence(P1, P2):
@@ -243,3 +247,41 @@ def TSNELossFunction(X_tsne, PX, embed_dim=2):
     P_tsne = EmbeddedDistance2Probabilities(D_tsne, embed_dim=embed_dim)
 
     return KLDivergence(PX, P_tsne)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Simple TSNE in Tensorflow")
+    parser.add_argument('--n-iter', dest='n_iter', help='Number of optimization steps to perform')
+    parser.set_defaults(n_iter=100)
+    args = parser.parse_args()
+
+    xt, yt = LoadData()
+
+    #Variable holding the projected TSNE values
+    if os.path.isfile('x_init.npy'):
+        x_init = np.load('x_init.npy')
+    else:
+        x_init = InitializeEmbedding(xt, embed_dim=2)
+        with open("x_init.npy", 'w') as f:
+            np.save(f, x_init)
+    X_tsne = tf.Variable(x_init.astype(np.float32), name='X_tsne')
+
+    if os.path.isfile('PX.npy'):
+        PX_vals = np.load('PX.npy')
+    else:
+        PX_vals = GenerateNeighbourProbabilities(xt)
+        with open("PX.npy", 'w') as f:
+            np.save(f, PX_vals)
+
+    #Placeholder for handling the data   
+    PX = tf.placeholder(tf.float32)
+
+    tsne_loss = TSNELossFunction(X_tsne, PX)
+    opt_step = tf.train.AdamOptimizer().minimize(tsne_loss)
+    init_step = tf.global_variables_initializer()
+
+    with tf.Session() as sess:
+        sess.run(init_step)
+
+        for _ in tqdm(xrange(args.n_iter), desc='Optimizing projection'):
+            result = sess.run(opt_step, feed_dict={PX : PX_vals})
