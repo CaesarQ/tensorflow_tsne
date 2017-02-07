@@ -1,3 +1,9 @@
+from __future__ import division, print_function
+
+import argparse
+import sys
+import os
+
 import numpy as np
 import tensorflow as tf
 
@@ -14,10 +20,11 @@ from keras.datasets import mnist
 
 from tqdm import tqdm
 
-from __future__ import division, print_function
+
 
 
 def LoadData():
+    print("Loading MNIST data...")
     _, (X_test, y_test) = mnist.load_data()
     X_test = X_test.reshape(-1, 28 * 28)
 
@@ -28,6 +35,20 @@ def LoadData():
 
 #######################
 #Data functions
+
+def InitializeEmbedding(X, embed_dim=2):
+    """
+    Compute initialized TSNE projections using isomap
+
+    Inputs : Data matrix X, numpy array (n_samples, n_features)
+
+    Returns :
+    """
+    print("Initializing projection via isomap...")
+    iso_model = Isomap(n_components=embed_dim)
+    embed_init = iso_model.fit_transform(X)
+
+    return embed_init
 
 def Precision2Entropy(D, beta):
     """
@@ -130,45 +151,95 @@ def GenerateNeighbourProbabilities(X, perplexity=30,
 
     #Obtain the pairwise distances
     D = pairwise_distances(X, metric=metric)
+    inds = (1 - np.eye(n_samples)).astype(bool)
+    D = D[inds].reshape( (n_samples, -1) )
 
     #The probability matrix
     P = np.zeros( (n_samples, n_samples,) )
-    inds_ = (1 - np.eye(n_samples)).astype(bool)
 
     log_perplexity = np.log(perplexity)
 
-    for Pi, Di in tqdm(zip(P, D), desc='Computing Neighbour Probabilities'):
+    for Pi, Di, inds_ in tqdm(zip(P, D, inds), desc='Computing Neighbour Probabilities'):
         Pi[inds_] = BinarySearchProbabilities(Di, log_perplexity, 
             tolerance=tolerance, beta_init=beta_init)
 
+    P[np.isnan(P)] = 0.
+    #Symmetrize and renormalize the probabilities
+    P = P + P.T
+    P /= P.sum()
+    P = np.maximum(P, sys.float_info.epsilon)
 
     return P
 
 ##################################
 #Functions over symbolic variables
-def InitializeEmbedding(X):
-    """
-    Initialize the tsne projection using isomap
-    """
 
+def PairwiseEmbeddedDistances(X):
+    """
+    Compute Euclidean neighbour distances in the projected space
+
+    Inputs:
+    -------
+
+    X : Tensor storing the TSNE projected samples
+
+    Returns:
+    ---------
+
+    D : Tensor storing neighbour distances
+    """
+    sum_x = tf.reduce_sum(tf.square(X), reduction_indices=1, keep_dims=False)
+    D = sum_x + tf.reshape(sum_x, [-1, 1]) - 2 * tf.matmul(X, tf.transpose(X))
+
+    return D
+
+
+#This will be a symbolic function
+def EmbeddedDistance2Probabilities(D, embed_dim=2):
+    """
+    Fit the student t-distribution to the distance matrix in the projected space
+
+    Inputs
+    -------
+
+    D : Tensor storing neighbour distances
+
+    Returns:
+    --------
+
+    Q : Tensor storing neighbour probabilities
+    """
+    alpha = embed_dim - 1
+    eps = tf.Variable(np.float32(sys.float_info.epsilon), name='eps')
+
+    Q = tf.pow(1 + D / alpha, -(alpha + 1) / 2)
+
+    #Remove diagonals
+    mask = tf.Variable((1 - np.eye(Q.get_shape()[0].value)).astype(np.float32))
+    Q *= mask
     
-    iso_model = Isomap(n_components=2)
-    embed_init = iso_model.fit_transform(X)
+    Q /= tf.reduce_sum(Q)
+    Q = tf.maximum(Q, eps)
+    return Q
 
-    return embed_init
+def KLDivergence(P1, P2):
+    eps = tf.Variable(sys.float_info.epsilon, name='eps')
+    KLD = tf.log((P1 + eps) / (P2 + eps))
+    KLD = tf.reduce_sum(P1 * KLD)
+    return KLD
 
-#This will be a symbolic function
-def PairwiseEmbeddedDistances():
-    pass
+def TSNELossFunction(X_tsne, PX, embed_dim=2):
+    """
+    Inputs 
+    -------
 
-#This will be a symbolic function
-def EmbeddedDistance2Probabilities():
-    pass
+    Xproj : tensor storing TSNE projected samples
+    PX : target neighbour probabilities, numpy array
 
-def KLDivergence():
-    pass
+    """
 
+    #Compute the neighbour probabilities in the embedded space
+    D_tsne = PairwiseEmbeddedDistances(X_tsne)
+    P_tsne = EmbeddedDistance2Probabilities(D_tsne, embed_dim=embed_dim)
 
-
-
-
+    return KLDivergence(PX, P_tsne)
