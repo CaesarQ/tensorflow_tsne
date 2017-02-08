@@ -13,10 +13,13 @@ import seaborn as sns
 sns.set(color_codes=True)
 
 from sklearn.manifold import Isomap
+from sklearn.decomposition import PCA
 from sklearn.metrics import pairwise_distances
 from sklearn.model_selection import train_test_split
 
 from keras.datasets import mnist
+
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from tqdm import tqdm
 
@@ -29,9 +32,7 @@ def LoadData():
     _, xt, _, yt  = train_test_split(X_test, y_test, 
         test_size=0.3, random_state=0)
 
-    n_class = np.unique(yt).shape[0]
-
-    return xt, yt, n_class
+    return xt / 255., yt
 
 #######################
 #Data functions
@@ -44,9 +45,11 @@ def InitializeEmbedding(X, embed_dim=2):
 
     Returns :
     """
-    print("Initializing projection via isomap...")
-    iso_model = Isomap(n_components=embed_dim)
-    embed_init = iso_model.fit_transform(X)
+    print("Initializing projection via pca...")
+    #iso_model = Isomap(n_components=embed_dim)
+    pca_model = PCA(n_components=embed_dim)
+    #embed_init = iso_model.fit_transform(X)
+    embed_init = pca_model.fit_transform(X)
 
     return embed_init
 
@@ -120,7 +123,7 @@ def BinarySearchProbabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0):
         if Hdiff > 0:
             #Raise betamin
             betamin = beta
-            if betamax == -np.inf:
+            if betamax == np.inf:
                 #Obtain upper bound by doubling
                 #beta until H < log_perplexity
                 beta = beta * 2
@@ -151,6 +154,7 @@ def GenerateNeighbourProbabilities(X, perplexity=30,
 
     #Obtain the pairwise distances
     D = pairwise_distances(X, metric=metric)
+
     inds = (1 - np.eye(n_samples)).astype(bool)
     D = D[inds].reshape( (n_samples, -1) )
 
@@ -163,7 +167,8 @@ def GenerateNeighbourProbabilities(X, perplexity=30,
         Pi[inds_] = BinarySearchProbabilities(Di, log_perplexity, 
             tolerance=tolerance, beta_init=beta_init)
 
-    P[np.isnan(P)] = 0.
+    P[np.where(np.isnan(P))] = 0.
+
     #Symmetrize and renormalize the probabilities
     P = P + P.T
     P /= P.sum()
@@ -257,46 +262,78 @@ def TSNELossFunction(X_tsne, PX, embed_dim=2):
 
     return KLDivergence(PX, P_tsne)
 
+def PlotEmbedding(X_init, X_final, Y, n_iter):
+    n_class = np.unique(Y).shape[0]
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Simple TSNE in Tensorflow")
-    parser.add_argument('--n-iter', type=int, dest='n_iter', help='Number of optimization steps to perform')
-    parser.set_defaults(n_iter=100)
-    args = parser.parse_args()
+    fig, axs = plt.subplots(1,2,figsize=(20,10))
+    colours = plt.cm.Spectral(np.linspace(0,1,n_class))
+    c = colours[Y]
 
-    xt, yt, n_class = LoadData()
+    im = axs[0].scatter(X_init[:,0], X_init[:,1], lw=0, c=c,
+        s=100)
+
+    for i, cl in enumerate(colours):
+        axs[0].plot([], [], color=cl, label=str(i))
+
+    axs[0].legend()
+    axs[0].set_title("PCA initialization")
+
+    im = axs[1].scatter(X_final[:,0], X_final[:,1], lw=0, c=c,
+        s=100)
+
+    for i, cl in enumerate(colours):
+        axs[1].plot([], [], color=cl, label=str(i))
+
+    axs[1].legend()
+    axs[1].set_title("TSNE embedding after {0} iterations".format(n_iter))
+
+    plt.savefig('tsne_embedding.png', bbox_inches='tight')
+
+
+    plt.show()
+
+
+def PlotEmbeddedMotion(X_init, X_final):
+    #Observe the point differences
+    fig, axs = plt.subplots(1,1,figsize=(10,10))
+
+    diff = ((X_final - X_init) ** 2).mean(axis=1)
+
+    im = axs.scatter(X_init[:,0], X_init[:,1], lw=0, c=diff,
+        cmap=plt.cm.gist_heat, s=50, alpha=0.5)
+
+    divider = make_axes_locatable(axs)
+    cax = divider.append_axes('right', size='5%', pad=0.05)
+    cbar = fig.colorbar(im, cax=cax, orientation='vertical')
+
+    axs.set_title("Total distance moved")
+    plt.show()
+
+def main(args):
+    ### Load/calculate the data, init values, and neighbour probabilities
+    xt, yt = LoadData()
 
     #Variable holding the projected TSNE values
-    if os.path.isfile('x_init.npy'):
-        x_init = np.load('x_init.npy')
-    else:
-        x_init = InitializeEmbedding(xt, embed_dim=2)
-        with open("x_init.npy", 'w') as f:
-            np.save(f, x_init)
+    x_init = InitializeEmbedding(xt, embed_dim=2)
     
     #Variables and initializations
     X_tsne = tf.Variable(x_init.astype(np.float32), name='X_tsne')
-
-    #Placeholder for handling the data   
+    
+    #Placeholder for handling the neighbour probabilties  
     PX = tf.placeholder(tf.float32, name='PX')
 
-    if os.path.isfile('PX.npy'):
-        PX_vals = np.load('PX.npy')
-    else:
-        PX_vals = GenerateNeighbourProbabilities(xt)
-        with open("PX.npy", 'w') as f:
-            np.save(f, PX_vals)
+    #Neighbour probabilities
+    PX_vals = GenerateNeighbourProbabilities(xt, perplexity=args.perplexity)
 
-    #Tensorflow computation graph
+    ###Assemble and run the Tensorflow Computation Graph
     tsne_loss = TSNELossFunction(X_tsne, PX)
 
-    #Optimize using Adam
-    opt_step = tf.train.AdamOptimizer().minimize(tsne_loss)
-    #opt_step = tf.train.GradientDescentOptimizer(0.5).minimize(tsne_loss)
+    #Optimize using GradientDescent
+    opt_step = tf.train.GradientDescentOptimizer(args.lr).minimize(tsne_loss, var_list=[X_tsne])
 
     init_step = tf.global_variables_initializer()
 
-    print([v.name for v in tf.global_variables()])
+    print("Optimizing")
 
     #Running TSNE optimization
     with tf.Session() as sess:
@@ -305,32 +342,18 @@ if __name__ == "__main__":
         for _ in tqdm(xrange(args.n_iter), desc='Optimizing projection'):
             tqdm.write('KL divergence : {0}'.format(sess.run(tsne_loss, feed_dict={PX : PX_vals})))
             sess.run(opt_step, feed_dict={PX : PX_vals})
-            result = sess.run(X_tsne)
+        result = sess.run(X_tsne)
 
-    #Generating a visualization of the training process
-
-    fig, axs = plt.subplots(1,2,figsize=(20,10))
-
-    colours = plt.cm.Spectral(np.linspace(0,1,n_class))
-    c = colours[yt]
-
-    im = axs[0].scatter(x_init[:,0], x_init[:,1], lw=0, c=c,
-        s=100)
-
-    for i, cl in enumerate(colours):
-        axs[0].plot([], [], color=cl, label=str(i))
-
-    axs[0].legend()
-    axs[0].set_title("Isomap initialization")
-
-    im = axs[1].scatter(result[:,0], result[:,1], lw=0, c=c,
-        s=100)
-
-    for i, cl in enumerate(colours):
-        axs[1].plot([], [], color=cl, label=str(i))
-
-    axs[1].legend()
-    axs[1].set_title("TSNE embedding")
+    PlotEmbedding(x_init, result, yt, args.n_iter)
+    PlotEmbeddedMotion(x_init, result)
 
 
-    plt.show()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Simple TSNE in Tensorflow")
+    parser.add_argument('--n-iter', type=int, dest='n_iter', help='Number of optimization steps to perform')
+    parser.add_argument('--perplexity', type=float, dest='perplexity', help='Expected number of neighbours')
+    parser.add_argument('--lr', type=float, dest='lr', help='Learning rate')
+    parser.set_defaults(n_iter=100, perplexity=30., lr=1000.)
+    args = parser.parse_args()
+
+    main(args)
