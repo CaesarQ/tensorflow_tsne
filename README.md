@@ -1,5 +1,7 @@
 Simple implementation of the TSNE algorithm in tensorflow
 
+# Command line usage
+
 usage: tensorflow_tsne.py [-h] [--n-iter N_ITER] [--perplexity PERPLEXITY]
                           [--lr LR]
 
@@ -11,7 +13,11 @@ optional arguments:
 
   --perplexity PERPLEXITY
                         Expected number of neighbours
-                        
+
   --lr LR               Learning rate
+
+# Demo
+
+1000 iterations with lr=2000, perplexity=30
 
 ![TSNE demo](tsne_embedding.png?raw=true "TSNE demo (Final KL-Divergence : 1.200)")
