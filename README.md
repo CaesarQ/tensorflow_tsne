@@ -18,6 +18,6 @@ optional arguments:
 
 # Demo
 
-1000 iterations with lr=2000, perplexity=30
+1000 iterations on MNIST sub-sample with lr=2000, perplexity=30
 
 ![TSNE demo](tsne_embedding.png?raw=true "TSNE demo (Final KL-Divergence : 1.200)")

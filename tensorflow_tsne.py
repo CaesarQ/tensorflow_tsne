@@ -24,7 +24,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tqdm import tqdm
 
 
-def LoadData():
+def load_data():
     print("Loading MNIST data...")
     _, (X_test, y_test) = mnist.load_data()
     X_test = X_test.reshape(-1, 28 * 28)
@@ -37,7 +37,7 @@ def LoadData():
 #######################
 #Data functions
 
-def InitializeEmbedding(X, embed_dim=2):
+def initialize_embedding(X, embed_dim=2):
     """
     Compute initialized TSNE projections using isomap
 
@@ -53,7 +53,7 @@ def InitializeEmbedding(X, embed_dim=2):
 
     return embed_init
 
-def Precision2Entropy(D, beta):
+def precision_to_entropy(D, beta):
     """
     Given distance vector and precision, calculate the probability distribution
     and the entropy
@@ -86,7 +86,7 @@ def Precision2Entropy(D, beta):
     
     return H, P
 
-def BinarySearchProbabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0):
+def binary_search_probabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0):
     """
     Construct the neighbour-probabilities for a given sample in the high-dimensional
     space by a search over possible precisions.
@@ -114,7 +114,7 @@ def BinarySearchProbabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0):
     betamin = -np.inf
     betamax = np.inf
 
-    H, P = Precision2Entropy(D, beta)
+    H, P = precision_to_entropy(D, beta)
 
     Hdiff = H - log_perplexity
     tries = 0
@@ -139,13 +139,13 @@ def BinarySearchProbabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0):
             else:
                 beta = (betamin + betamax) / 2
 
-        H, P = Precision2Entropy(D, beta)
+        H, P = precision_to_entropy(D, beta)
         Hdiff = H - log_perplexity
         tries += 1
 
     return P
 
-def GenerateNeighbourProbabilities(X, perplexity=30, 
+def generate_neighbour_probabilities(X, perplexity=30, 
         metric='euclidean', tolerance=1e-5, beta_init=1.0):
     """
 
@@ -164,7 +164,7 @@ def GenerateNeighbourProbabilities(X, perplexity=30,
     log_perplexity = np.log(perplexity)
 
     for Pi, Di, inds_ in tqdm(zip(P, D, inds), desc='Computing Neighbour Probabilities'):
-        Pi[inds_] = BinarySearchProbabilities(Di, log_perplexity, 
+        Pi[inds_] = binary_search_probabilities(Di, log_perplexity, 
             tolerance=tolerance, beta_init=beta_init)
 
     P[np.where(np.isnan(P))] = 0.
@@ -179,7 +179,7 @@ def GenerateNeighbourProbabilities(X, perplexity=30,
 ##################################
 #Functions over symbolic variables
 
-def PairwiseEmbeddedDistances(X):
+def pairwise_embedded_distances(X):
     """
     Compute Euclidean neighbour distances in the projected space
 
@@ -202,7 +202,7 @@ def PairwiseEmbeddedDistances(X):
 
 
 #This will be a symbolic function
-def EmbeddedDistance2Probabilities(D, embed_dim=2):
+def embedded_distance_to_probabilities(D, embed_dim=2):
     """
     Fit the student t-distribution to the distance matrix in the projected space
 
@@ -240,13 +240,13 @@ def EmbeddedDistance2Probabilities(D, embed_dim=2):
     Q = tf.maximum(Q, eps)
     return Q
 
-def KLDivergence(P1, P2):
+def kl_divergence(P1, P2):
     KLD = tf.log((P1) / (P2))
     KLD = tf.reduce_sum(P1 * KLD)
     return KLD
 
 
-def TSNELossFunction(X_tsne, PX, embed_dim=2):
+def tsne_loss_function(X_tsne, PX, embed_dim=2):
     """
     Inputs 
     -------
@@ -257,12 +257,12 @@ def TSNELossFunction(X_tsne, PX, embed_dim=2):
     """
 
     #Compute the neighbour probabilities in the embedded space
-    D_tsne = PairwiseEmbeddedDistances(X_tsne)
-    P_tsne = EmbeddedDistance2Probabilities(D_tsne, embed_dim=embed_dim)
+    D_tsne = pairwise_embedded_distances(X_tsne)
+    P_tsne = embedded_distance_to_probabilities(D_tsne, embed_dim=embed_dim)
 
-    return KLDivergence(PX, P_tsne)
+    return kl_divergence(PX, P_tsne)
 
-def PlotEmbedding(X_init, X_final, Y, n_iter):
+def plot_embedding(X_init, X_final, Y, n_iter):
     n_class = np.unique(Y).shape[0]
 
     fig, axs = plt.subplots(1,2,figsize=(20,10))
@@ -293,7 +293,7 @@ def PlotEmbedding(X_init, X_final, Y, n_iter):
     plt.show()
 
 
-def PlotEmbeddedMotion(X_init, X_final):
+def plot_embedded_motion(X_init, X_final):
     #Observe the point differences
     fig, axs = plt.subplots(1,1,figsize=(10,10))
 
@@ -311,10 +311,10 @@ def PlotEmbeddedMotion(X_init, X_final):
 
 def main(args):
     ### Load/calculate the data, init values, and neighbour probabilities
-    xt, yt = LoadData()
+    xt, yt = load_data()
 
     #Variable holding the projected TSNE values
-    x_init = InitializeEmbedding(xt, embed_dim=2)
+    x_init = initialize_embedding(xt, embed_dim=2)
     
     #Variables and initializations
     X_tsne = tf.Variable(x_init.astype(np.float32), name='X_tsne')
@@ -323,10 +323,10 @@ def main(args):
     PX = tf.placeholder(tf.float32, name='PX')
 
     #Neighbour probabilities
-    PX_vals = GenerateNeighbourProbabilities(xt, perplexity=args.perplexity)
+    PX_vals = generate_neighbour_probabilities(xt, perplexity=args.perplexity)
 
     ###Assemble and run the Tensorflow Computation Graph
-    tsne_loss = TSNELossFunction(X_tsne, PX)
+    tsne_loss = tsne_loss_function(X_tsne, PX)
 
     #Optimize using GradientDescent
     opt_step = tf.train.GradientDescentOptimizer(args.lr).minimize(tsne_loss, var_list=[X_tsne])
@@ -344,8 +344,8 @@ def main(args):
             sess.run(opt_step, feed_dict={PX : PX_vals})
         result = sess.run(X_tsne)
 
-    PlotEmbedding(x_init, result, yt, args.n_iter)
-    PlotEmbeddedMotion(x_init, result)
+    plot_embedding(x_init, result, yt, args.n_iter)
+    plot_embedded_motion(x_init, result)
 
 
 if __name__ == "__main__":
