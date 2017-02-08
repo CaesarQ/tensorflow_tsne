@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set(color_codes=True)
 
-from sklearn.manifold import Isomap
 from sklearn.decomposition import PCA
 from sklearn.metrics import pairwise_distances
 from sklearn.model_selection import train_test_split
@@ -41,14 +40,18 @@ def initialize_embedding(X, embed_dim=2):
     """
     Compute initialized TSNE projections using isomap
 
-    Inputs : Data matrix X, numpy array (n_samples, n_features)
-
-    Returns :
+    Args:
+        X (numpy.ndarray): Data matrix (n_samples, n_features)
+    
+    Kwargs:
+        embed_dim (int): Dimension of the TSNE projection
+    
+    Returns:
+        embed_init (numpy.ndarray): Initialized projection (n_samples, embed_dim)
+    
     """
-    print("Initializing projection via pca...")
-    #iso_model = Isomap(n_components=embed_dim)
+    print("Initializing projection via PCA...")
     pca_model = PCA(n_components=embed_dim)
-    #embed_init = iso_model.fit_transform(X)
     embed_init = pca_model.fit_transform(X)
 
     return embed_init
@@ -58,24 +61,21 @@ def precision_to_entropy(D, beta):
     Given distance vector and precision, calculate the probability distribution
     and the entropy
 
-    Inputs
-    -------
-
-    D : Distance to all points (numpy array, shape (n_samples,))
-    beta : Precision, the inverse of the variance
-
-    Returns
-    --------
-
-    Entropy (H), float
-    Probability distribution (P) :(numpy array, shape (n_samples,)) 
-
     P = exp(-beta * D) / Z = Pb / Z
     Z = sum(Pb)
 
     H = -sum(P * log(P))
       = sum(P * log(Z) + beta * P * D)
       = log(Z) + beta * sum(P * D)
+
+    Args:
+
+        D (numpy.ndarray): Distance to all points (n_samples,)
+        beta (float): Precision, the inverse of the variance
+
+    Returns:
+        H (float) : The entropy of the distribution
+        P (numpy.ndarray): Probability distribution (n_samples,)
 
     """
     P = np.exp(-beta * D)
@@ -91,18 +91,16 @@ def binary_search_probabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0
     Construct the neighbour-probabilities for a given sample in the high-dimensional
     space by a search over possible precisions.
 
-    Inputs
-    -------
+    Args:
+        D (numpy.ndarray): Distance to all points (n_samples,)
+        log_perplexity (float): log(perplexity)
 
-    D : Distance to all points (numpy array, shape (n_samples,))
-    log_perplexity : log(perplexity)
-    tolerance : Acceptable perplexity violation
-    beta_init : Initial guess for perplexity
+    Kwargs:
+        tolerance (float) : Acceptable perplexity violation
+        beta_init (float): Initial guess for perplexity
 
-    Returns
-    --------
-
-    P : Probability vector (numpy array, shape (n_samples,))
+    Returns:
+        P (numpy.ndarray): Probability vector (n_samples,)
     """
 
     #Perform a binary search for the correct precision
@@ -148,6 +146,19 @@ def binary_search_probabilities(D, log_perplexity, tolerance=1e-5, beta_init=1.0
 def generate_neighbour_probabilities(X, perplexity=30, 
         metric='euclidean', tolerance=1e-5, beta_init=1.0):
     """
+    Compute the pairwise distance matrix and define the neighbour distribution, as used in TSNE
+
+    Args:
+        X (numpy.ndarray): Data matrix (n_samples, n_features)
+
+    Kwargs:
+        perplexity (float): Effective number of neighbours to enforce
+        metric (str): Metric to use for pairwise_distance computation
+        tolerance (float) : Acceptable perplexity violation
+        beta_init (float): Initial guess for perplexity
+
+    Returns:
+        P (numpy.ndarray): Neighbour probability distribution
 
     """
     n_samples, _ = X.shape
@@ -183,17 +194,13 @@ def pairwise_embedded_distances(X):
     """
     Compute Euclidean neighbour distances in the projected space
 
-    Inputs:
-    -------
-
-    X : Tensor storing the TSNE projected samples
-
     ||xi - xj|| ** 2 = xi ** 2 + xj ** 2 - 2 * xi * xj
 
-    Returns:
-    ---------
+    Args:
+        X (tensorflow.Variable): Tensor storing the TSNE projected samples
 
-    D : Tensor storing neighbour distances
+    Returns:
+        D (tensorflow.Variable): Tensor storing neighbour distances
     """
     sum_x_2 = tf.reduce_sum(tf.square(X), reduction_indices=1, keep_dims=False)
     D = sum_x_2 + tf.reshape(sum_x_2, [-1, 1]) - 2 * tf.matmul(X, tf.transpose(X))
@@ -206,30 +213,15 @@ def embedded_distance_to_probabilities(D, embed_dim=2):
     """
     Fit the student t-distribution to the distance matrix in the projected space
 
-    Inputs
-    -------
+    Args:
+        D (tensorflow.Variable): Tensor storing neighbour distances
 
-    D : Tensor storing neighbour distances
+    Kwargs:
+        embed_dim (int): Dimension of the TSNE projection
 
     Returns:
-    --------
-
-    Q : Tensor storing neighbour probabilities
+        Q (tensorflow.Variable): Tensor storing neighbour probabilities
     """
-    #alpha = embed_dim - 1
-
-    # #T-student distribution
-    # Q = tf.pow(1 + D, -1)
-
-    # #Remove diagonals
-    # mask = tf.Variable((1 - np.eye(Q.get_shape()[0].value)).astype(np.float32))
-
-    # #Normalize and clip
-    # sum_q = tf.reduce_sum(Q * mask)
-    # Q /= sum_q
-
-    # eps = tf.Variable(np.float32(10e-8), name='eps')
-    # Q = tf.maximum(Q, eps)
     alpha = embed_dim - 1
     eps = tf.constant(np.float32(10e-8), name='eps')
 
@@ -241,6 +233,16 @@ def embedded_distance_to_probabilities(D, embed_dim=2):
     return Q
 
 def kl_divergence(P1, P2):
+    """
+    Compute the Kullback–Leibler divergence between two probability distributions
+
+    Args:
+        P1 : (tensorflow.placeholder): Tensor storing the target probability distribution
+        P2 : (tensorflow.Variable): Tensor storing the model distribution
+
+    Returns:
+        KLD (tensorflow.Variable): Kullback–Leibler divergence
+    """
     KLD = tf.log((P1) / (P2))
     KLD = tf.reduce_sum(P1 * KLD)
     return KLD
@@ -248,12 +250,18 @@ def kl_divergence(P1, P2):
 
 def tsne_loss_function(X_tsne, PX, embed_dim=2):
     """
-    Inputs 
-    -------
+    Loss function for TSNE.  The KL divergence between the embedded neighbour distribution and the 
+    high-dimensional neighbour distributionn
 
-    Xproj : tensor storing TSNE projected samples
-    PX : target neighbour probabilities, numpy array
+    Args:
+        Xproj (tensorflow.Variable): tensor storing TSNE projected samples
+        PX (tensorflow.placeholder) : tensor storing target neighbour probabilities
 
+    Kwargs:
+        embed_dim (int): Dimension of the TSNE projection
+
+    Returns:
+        TSNE Loss
     """
 
     #Compute the neighbour probabilities in the embedded space
@@ -263,6 +271,15 @@ def tsne_loss_function(X_tsne, PX, embed_dim=2):
     return kl_divergence(PX, P_tsne)
 
 def plot_embedding(X_init, X_final, Y, n_iter):
+    """
+    Generate a before-after plot for the TSNE process.
+
+    Args:
+        X_init (numpy.ndarray): Initialized projection (n_samples, embed_dim)
+        X_final (numpy.ndarray): Result of TSNE optimization (n_samples, embed_dim)
+        Y (numpy.ndarray) : Class targets (n_samples,)
+        n_iter (int) : Number of iterations performed in TSNE optimization
+    """
     n_class = np.unique(Y).shape[0]
 
     fig, axs = plt.subplots(1,2,figsize=(20,10))
@@ -294,7 +311,13 @@ def plot_embedding(X_init, X_final, Y, n_iter):
 
 
 def plot_embedded_motion(X_init, X_final):
-    #Observe the point differences
+    """
+    Examine the motion of the projected data
+
+    Args:
+        X_init (numpy.ndarray): Initialized projection (n_samples, embed_dim)
+        X_final (numpy.ndarray): Result of TSNE optimization (n_samples, embed_dim)    
+    """
     fig, axs = plt.subplots(1,1,figsize=(10,10))
 
     diff = ((X_final - X_init) ** 2).mean(axis=1)
@@ -351,7 +374,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple TSNE in Tensorflow")
     parser.add_argument('--n-iter', type=int, dest='n_iter', help='Number of optimization steps to perform')
-    parser.add_argument('--perplexity', type=float, dest='perplexity', help='Expected number of neighbours')
+    parser.add_argument('--perplexity', type=float, dest='perplexity', help='Effective number of neighbours to enforce')
     parser.add_argument('--lr', type=float, dest='lr', help='Learning rate')
     parser.set_defaults(n_iter=100, perplexity=30., lr=1000.)
     args = parser.parse_args()
