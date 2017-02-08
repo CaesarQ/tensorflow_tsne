@@ -2,19 +2,19 @@ Simple implementation of the TSNE algorithm in tensorflow
 
 # Command line usage
 
-usage: tensorflow_tsne.py [-h] [--n-iter N_ITER] [--perplexity PERPLEXITY]
-                          [--lr LR]
+	usage: tensorflow_tsne.py [-h] [--n-iter N_ITER] [--perplexity PERPLEXITY]
+	                          [--lr LR]
 
-optional arguments:
+	optional arguments:
 
-  -h, --help            show this help message and exit
+	  -h, --help            show this help message and exit
 
-  --n-iter N_ITER       Number of optimization steps to perform
+	  --n-iter N_ITER       Number of optimization steps to perform
 
-  --perplexity PERPLEXITY
-                        Expected number of neighbours
+	  --perplexity PERPLEXITY
+	                        Effective number of neighbours to enforce
 
-  --lr LR               Learning rate
+	  --lr LR               Learning rate
 
 # Demo
 
